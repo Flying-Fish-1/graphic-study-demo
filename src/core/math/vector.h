@@ -63,6 +63,7 @@ struct Vector3 {
     float length() const;
     float lengthSquared() const;
     Vector3 normalize() const;
+    Vector3 reflect(const Vector3& normal) const;
     Vector2 xy() const;
 };
 

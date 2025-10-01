@@ -105,6 +105,13 @@ const Matrix4& Camera::getViewProjectionMatrix() const {
     return m_viewProjectionMatrix;
 }
 
+Matrix4 Camera::getViewportMatrix(int screenWidth, int screenHeight) const {
+    // 视口变换：将NDC坐标(-1,1)映射到屏幕坐标(0, screenWidth/Height)
+    // 注意：Y轴需要翻转，因为屏幕坐标系Y轴向下
+    return Matrix4::translation(screenWidth / 2.0f, screenHeight / 2.0f, 0.0f) *
+           Matrix4::scale(screenWidth / 2.0f, -screenHeight / 2.0f, 1.0f);
+}
+
 const Frustum& Camera::getFrustum() const {
     if (m_frustumDirty || m_viewDirty || m_projectionDirty) {
         updateFrustum();
@@ -244,15 +251,15 @@ void Camera::setFar(float far) {
 
 void Camera::updateViewMatrix() const {
     Vector3 forward = (m_target - m_position).normalize();
-    Vector3 right = forward.cross(m_up).normalize();
-    Vector3 up = right.cross(forward);
-    
-    // 构建视图矩阵
+    Vector3 right = m_up.cross(forward).normalize();
+    Vector3 up = forward.cross(right);
+
+    // 左手坐标系视图矩阵 (D3D 风格)
     m_viewMatrix = Matrix4({
-        right.x,   up.x,   -forward.x,  0,
-        right.y,   up.y,   -forward.y,  0,
-        right.z,   up.z,   -forward.z,  0,
-        -right.dot(m_position), -up.dot(m_position), forward.dot(m_position), 1
+        right.x,   right.y,   right.z,   -right.dot(m_position),
+        up.x,      up.y,      up.z,      -up.dot(m_position),
+        forward.x, forward.y, forward.z, -forward.dot(m_position),
+        0, 0, 0, 1
     });
     
     m_viewDirty = false;
@@ -265,55 +272,19 @@ void Camera::updateProjectionMatrix() const {
 
 void Camera::updateFrustum() const {
     Matrix4 vp = getViewProjectionMatrix();
-    
-    // 从视图投影矩阵提取6个裁剪平面
-    // 左平面
-    m_frustum.planes[0] = Vector4(
-        vp.m[3] + vp.m[0],
-        vp.m[7] + vp.m[4], 
-        vp.m[11] + vp.m[8],
-        vp.m[15] + vp.m[12]
-    );
-    
-    // 右平面
-    m_frustum.planes[1] = Vector4(
-        vp.m[3] - vp.m[0],
-        vp.m[7] - vp.m[4],
-        vp.m[11] - vp.m[8],
-        vp.m[15] - vp.m[12]
-    );
-    
-    // 下平面
-    m_frustum.planes[2] = Vector4(
-        vp.m[3] + vp.m[1],
-        vp.m[7] + vp.m[5],
-        vp.m[11] + vp.m[9],
-        vp.m[15] + vp.m[13]
-    );
-    
-    // 上平面
-    m_frustum.planes[3] = Vector4(
-        vp.m[3] - vp.m[1],
-        vp.m[7] - vp.m[5],
-        vp.m[11] - vp.m[9],
-        vp.m[15] - vp.m[13]
-    );
-    
-    // 近平面
-    m_frustum.planes[4] = Vector4(
-        vp.m[3] + vp.m[2],
-        vp.m[7] + vp.m[6],
-        vp.m[11] + vp.m[10],
-        vp.m[15] + vp.m[14]
-    );
-    
-    // 远平面
-    m_frustum.planes[5] = Vector4(
-        vp.m[3] - vp.m[2],
-        vp.m[7] - vp.m[6],
-        vp.m[11] - vp.m[10],
-        vp.m[15] - vp.m[14]
-    );
+    Vector4 row0(vp.m[0], vp.m[1], vp.m[2], vp.m[3]);
+    Vector4 row1(vp.m[4], vp.m[5], vp.m[6], vp.m[7]);
+    Vector4 row2(vp.m[8], vp.m[9], vp.m[10], vp.m[11]);
+    Vector4 row3(vp.m[12], vp.m[13], vp.m[14], vp.m[15]);
+
+    // 左/右/下/上
+    m_frustum.planes[0] = row3 + row0;
+    m_frustum.planes[1] = row3 - row0;
+    m_frustum.planes[2] = row3 + row1;
+    m_frustum.planes[3] = row3 - row1;
+    // 近/远 (D3D 风格，Z∈[0,1])
+    m_frustum.planes[4] = row2;
+    m_frustum.planes[5] = row3 - row2;
     
     // 归一化平面方程
     for (int i = 0; i < 6; i++) {

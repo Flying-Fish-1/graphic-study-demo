@@ -115,6 +115,13 @@ public:
     const Matrix4& getViewProjectionMatrix() const;
     
     /**
+     * @brief 获取视口矩阵
+     * @param screenWidth 屏幕宽度
+     * @param screenHeight 屏幕高度
+     */
+    Matrix4 getViewportMatrix(int screenWidth, int screenHeight) const;
+    
+    /**
      * @brief 获取视锥体
      */
     const Frustum& getFrustum() const;

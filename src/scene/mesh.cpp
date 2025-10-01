@@ -1,9 +1,19 @@
 #include "mesh.h"
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace Scene {
 
-// ==================== BoundingBox 实现 ====================
+using Core::Math::Constants::PI;
+using Core::Math::Constants::TAU;
+
+BoundingBox::BoundingBox()
+    : min(Vector3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max())),
+      max(Vector3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest())) {}
+
+BoundingBox::BoundingBox(const Vector3& minPoint, const Vector3& maxPoint)
+    : min(minPoint), max(maxPoint) {}
 
 bool BoundingBox::contains(const Vector3& point) const {
     return point.x >= min.x && point.x <= max.x &&
@@ -17,289 +27,278 @@ bool BoundingBox::intersects(const BoundingBox& other) const {
              other.min.z > max.z || other.max.z < min.z);
 }
 
+Vector3 BoundingBox::getCenter() const {
+    return (min + max) * 0.5f;
+}
+
+Vector3 BoundingBox::getSize() const {
+    return max - min;
+}
+
 void BoundingBox::expand(const Vector3& point) {
     min.x = std::min(min.x, point.x);
     min.y = std::min(min.y, point.y);
     min.z = std::min(min.z, point.z);
-    
+
     max.x = std::max(max.x, point.x);
     max.y = std::max(max.y, point.y);
     max.z = std::max(max.z, point.z);
 }
 
 void BoundingBox::reset() {
-    min = Vector3(999999, 999999, 999999);
-    max = Vector3(-999999, -999999, -999999);
+    min = Vector3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    max = Vector3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
 }
 
-// ==================== Mesh 实现 ====================
-
-Mesh::Mesh() : m_material(nullptr), m_transform(Matrix4::identity()), m_useIndices(false) {
-}
-
-Mesh::~Mesh() {
-    // 注意：不删除材质，因为材质可能被多个网格共享
+Mesh::Mesh() : m_material(nullptr) {
+    m_bounds.reset();
 }
 
 int Mesh::addVertex(const Vertex& vertex) {
     m_vertices.push_back(vertex);
+    m_bounds.expand(vertex.position);
     return static_cast<int>(m_vertices.size() - 1);
 }
 
-void Mesh::addTriangle(const Vertex& v0, const Vertex& v1, const Vertex& v2) {
-    Triangle triangle(v0, v1, v2);
-    triangle.material = m_material;
-    m_triangles.push_back(triangle);
+void Mesh::addTriangle(uint32_t i0, uint32_t i1, uint32_t i2) {
+    m_indices.push_back(i0);
+    m_indices.push_back(i1);
+    m_indices.push_back(i2);
 }
 
-void Mesh::addTriangle(int i0, int i1, int i2) {
-    if (i0 < m_vertices.size() && i1 < m_vertices.size() && i2 < m_vertices.size()) {
-        m_indices.push_back(i0);
-        m_indices.push_back(i1);
-        m_indices.push_back(i2);
-        m_useIndices = true;
-        
-        // 同时创建三角形
-        Triangle triangle(m_vertices[i0], m_vertices[i1], m_vertices[i2]);
-        triangle.material = m_material;
-        m_triangles.push_back(triangle);
+void Mesh::calculateBoundingBox() {
+    m_bounds.reset();
+    for (const auto& vertex : m_vertices) {
+        m_bounds.expand(vertex.position);
     }
 }
 
-void Mesh::calculateNormals() {
-    // 先计算面法向量
-    for (auto& triangle : m_triangles) {
-        triangle.calculateNormal();
+void Mesh::calculateFaceNormals() {
+    if (m_vertices.empty() || m_indices.empty()) return;
+    for (auto& vertex : m_vertices) {
+        vertex.normal = Vector3(0.0f, 0.0f, 0.0f);
     }
-    
-    // 如果使用顶点，也计算顶点法向量
-    if (!m_vertices.empty()) {
-        calculateVertexNormals();
+
+    for (std::size_t i = 0; i + 2 < m_indices.size(); i += 3) {
+        Vertex& v0 = m_vertices[m_indices[i]];
+        Vertex& v1 = m_vertices[m_indices[i + 1]];
+        Vertex& v2 = m_vertices[m_indices[i + 2]];
+
+        Vector3 edge1 = v1.position - v0.position;
+        Vector3 edge2 = v2.position - v0.position;
+        Vector3 normal = edge1.cross(edge2);
+
+        v0.normal = v0.normal + normal;
+        v1.normal = v1.normal + normal;
+        v2.normal = v2.normal + normal;
+    }
+
+    for (auto& vertex : m_vertices) {
+        if (vertex.normal.lengthSquared() > 0.0f) {
+            vertex.normal = vertex.normal.normalize();
+        } else {
+            vertex.normal = Vector3(0.0f, 0.0f, 1.0f);
+        }
     }
 }
 
 void Mesh::calculateVertexNormals() {
-    // 重置所有顶点法向量
+    calculateFaceNormals();
+}
+
+void Mesh::ensureTangents() {
+    if (m_vertices.empty() || m_indices.empty()) return;
+
     for (auto& vertex : m_vertices) {
-        vertex.normal = Vector3(0, 0, 0);
+        vertex.tangent = Vector3(1.0f, 0.0f, 0.0f);
+        vertex.bitangent = Vector3(0.0f, 1.0f, 0.0f);
     }
-    
-    // 累加相邻面的法向量
-    if (m_useIndices && m_indices.size() % 3 == 0) {
-        for (size_t i = 0; i < m_indices.size(); i += 3) {
-            int i0 = m_indices[i];
-            int i1 = m_indices[i + 1];
-            int i2 = m_indices[i + 2];
-            
-            Vector3 faceNormal = m_triangles[i / 3].faceNormal;
-            
-            m_vertices[i0].normal = m_vertices[i0].normal + faceNormal;
-            m_vertices[i1].normal = m_vertices[i1].normal + faceNormal;
-            m_vertices[i2].normal = m_vertices[i2].normal + faceNormal;
+
+    for (std::size_t i = 0; i + 2 < m_indices.size(); i += 3) {
+        Vertex& v0 = m_vertices[m_indices[i]];
+        Vertex& v1 = m_vertices[m_indices[i + 1]];
+        Vertex& v2 = m_vertices[m_indices[i + 2]];
+
+        Vector3 deltaPos1 = v1.position - v0.position;
+        Vector3 deltaPos2 = v2.position - v0.position;
+        Vector2 deltaUV1 = v1.texCoord - v0.texCoord;
+        Vector2 deltaUV2 = v2.texCoord - v0.texCoord;
+
+        float denom = deltaUV1.x * deltaUV2.y - deltaUV1.y * deltaUV2.x;
+        if (std::fabs(denom) < 1e-6f) {
+            continue;
         }
-    }
-    
-    // 归一化顶点法向量
-    for (auto& vertex : m_vertices) {
-        vertex.normal = vertex.normal.normalize();
+        float r = 1.0f / denom;
+        Vector3 tangent = (deltaPos1 * deltaUV2.y - deltaPos2 * deltaUV1.y) * r;
+        Vector3 bitangent = (deltaPos2 * deltaUV1.x - deltaPos1 * deltaUV2.x) * r;
+
+        v0.tangent = (v0.tangent + tangent).normalize();
+        v1.tangent = (v1.tangent + tangent).normalize();
+        v2.tangent = (v2.tangent + tangent).normalize();
+
+        v0.bitangent = (v0.bitangent + bitangent).normalize();
+        v1.bitangent = (v1.bitangent + bitangent).normalize();
+        v2.bitangent = (v2.bitangent + bitangent).normalize();
     }
 }
-
-void Mesh::calculateBoundingBox() {
-    m_boundingBox.reset();
-    
-    for (const auto& vertex : m_vertices) {
-        m_boundingBox.expand(vertex.position);
-    }
-    
-    // 如果没有顶点，使用三角形顶点
-    if (m_vertices.empty()) {
-        for (const auto& triangle : m_triangles) {
-            for (int i = 0; i < 3; i++) {
-                m_boundingBox.expand(triangle.vertices[i].position);
-            }
-        }
-    }
-}
-
-void Mesh::transform(const Matrix4& transform) {
-    // 变换所有顶点
-    for (auto& vertex : m_vertices) {
-        vertex.transform(transform);
-    }
-    
-    // 变换所有三角形
-    for (auto& triangle : m_triangles) {
-        triangle.transform(transform);
-    }
-    
-    // 重新计算包围盒
-    calculateBoundingBox();
-}
-
-std::vector<Triangle> Mesh::getTransformedTriangles() const {
-    std::vector<Triangle> transformedTriangles = m_triangles;
-    
-    // 应用本地变换矩阵
-    for (auto& triangle : transformedTriangles) {
-        triangle.transform(m_transform);
-    }
-    
-    return transformedTriangles;
-}
-
-void Mesh::clear() {
-    m_vertices.clear();
-    m_triangles.clear();
-    m_indices.clear();
-    m_useIndices = false;
-    m_boundingBox.reset();
-}
-
-void Mesh::rebuildTriangles() {
-    m_triangles.clear();
-    
-    if (m_useIndices && m_indices.size() % 3 == 0) {
-        for (size_t i = 0; i < m_indices.size(); i += 3) {
-            int i0 = m_indices[i];
-            int i1 = m_indices[i + 1];
-            int i2 = m_indices[i + 2];
-            
-            if (i0 < m_vertices.size() && i1 < m_vertices.size() && i2 < m_vertices.size()) {
-                Triangle triangle(m_vertices[i0], m_vertices[i1], m_vertices[i2]);
-                triangle.material = m_material;
-                m_triangles.push_back(triangle);
-            }
-        }
-    }
-}
-
-// ==================== 预定义几何体创建 ====================
 
 Mesh* Mesh::createCube(float size) {
     Mesh* mesh = new Mesh();
     float half = size * 0.5f;
-    
-    // 立方体的8个顶点
+
     std::vector<Vector3> positions = {
-        Vector3(-half, -half, -half), Vector3(half, -half, -half), Vector3(half, half, -half), Vector3(-half, half, -half),  // 后面
-        Vector3(-half, -half, half),  Vector3(half, -half, half),  Vector3(half, half, half),  Vector3(-half, half, half)   // 前面
+        {-half, -half, -half}, {half, -half, -half}, {half, half, -half}, {-half, half, -half},
+        {-half, -half, half},  {half, -half, half},  {half, half, half},  {-half, half, half}
     };
-    
-    // 立方体的6个面的法向量
+
     std::vector<Vector3> normals = {
-        Vector3(0, 0, -1), Vector3(0, 0, 1),   // 后面、前面
-        Vector3(-1, 0, 0), Vector3(1, 0, 0),   // 左面、右面
-        Vector3(0, 1, 0),  Vector3(0, -1, 0)   // 上面、下面
+        {0, 0, -1}, {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, -1, 0}
     };
-    
-    // 立方体的6个面（每面4个顶点索引）
-    int faceIndices[6][4] = {
-        {0, 1, 2, 3}, // 后面
-        {4, 7, 6, 5}, // 前面
-        {0, 4, 7, 3}, // 左面
-        {1, 5, 6, 2}, // 右面
-        {3, 2, 6, 7}, // 上面
-        {0, 1, 5, 4}  // 下面
+
+    std::vector<Vector2> uvs = {
+        {0, 0}, {1, 0}, {1, 1}, {0, 1}
     };
-    
-    // 为每个面创建顶点和三角形
-    for (int face = 0; face < 6; face++) {
-        Vector3 normal = normals[face];
-        Color faceColor = Color(0.8f, 0.8f, 0.8f, 1.0f);
-        
-        // 每个面的4个顶点
-        Vertex vertices[4];
-        for (int i = 0; i < 4; i++) {
-            vertices[i] = Vertex(positions[faceIndices[face][i]], normal, 
-                                Vector2(static_cast<float>(i % 2), static_cast<float>(i / 2)), faceColor);
-        }
-        
-        // 每个面用2个三角形组成
-        mesh->addTriangle(vertices[0], vertices[1], vertices[2]);
-        mesh->addTriangle(vertices[0], vertices[2], vertices[3]);
+
+    struct Face { int a, b, c, d; Vector3 normal; Color color; };
+    std::vector<Face> faces = {
+        {1, 0, 3, 2, normals[0], Color(1.0f, 0.2f, 0.2f)}, // back  - red
+        {4, 5, 6, 7, normals[1], Color(0.2f, 1.0f, 0.2f)}, // front - green
+        {4, 0, 3, 7, normals[2], Color(0.2f, 0.2f, 1.0f)}, // left  - blue
+        {5, 1, 2, 6, normals[3], Color(1.0f, 1.0f, 0.2f)}, // right - yellow
+        {3, 7, 6, 2, normals[4], Color(1.0f, 0.5f, 0.2f)}, // top   - orange
+        {0, 1, 5, 4, normals[5], Color(0.2f, 1.0f, 1.0f)}  // bottom- cyan
+    };
+
+    for (const auto& face : faces) {
+        Vector3 tangent(1.0f, 0.0f, 0.0f);
+        Vector3 bitangent(0.0f, 1.0f, 0.0f);
+        int baseIndex = static_cast<int>(mesh->m_vertices.size());
+
+        mesh->m_vertices.emplace_back(positions[face.a], face.normal, uvs[0], face.color, tangent, bitangent);
+        mesh->m_vertices.emplace_back(positions[face.b], face.normal, uvs[1], face.color, tangent, bitangent);
+        mesh->m_vertices.emplace_back(positions[face.c], face.normal, uvs[2], face.color, tangent, bitangent);
+        mesh->m_vertices.emplace_back(positions[face.d], face.normal, uvs[3], face.color, tangent, bitangent);
+
+        mesh->addTriangle(baseIndex + 0, baseIndex + 1, baseIndex + 2);
+        mesh->addTriangle(baseIndex + 0, baseIndex + 2, baseIndex + 3);
     }
-    
+
     mesh->calculateBoundingBox();
+    mesh->calculateFaceNormals();
+    mesh->ensureTangents();
     return mesh;
 }
 
 Mesh* Mesh::createQuad(float width, float height) {
     Mesh* mesh = new Mesh();
-    float halfW = width * 0.5f;
-    float halfH = height * 0.5f;
-    
-    Vector3 normal(0, 0, 1);
-    Color color = Color::WHITE;
-    
-    Vertex v0(Vector3(-halfW, -halfH, 0), normal, Vector2(0, 0), color);
-    Vertex v1(Vector3(halfW, -halfH, 0), normal, Vector2(1, 0), color);
-    Vertex v2(Vector3(halfW, halfH, 0), normal, Vector2(1, 1), color);
-    Vertex v3(Vector3(-halfW, halfH, 0), normal, Vector2(0, 1), color);
-    
-    mesh->addTriangle(v0, v1, v2);
-    mesh->addTriangle(v0, v2, v3);
-    
+    float hw = width * 0.5f;
+    float hh = height * 0.5f;
+
+    mesh->m_vertices.emplace_back(Vector3(-hw, -hh, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(0.0f, 1.0f), Color::WHITE);
+    mesh->m_vertices.emplace_back(Vector3(hw, -hh, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(1.0f, 1.0f), Color::WHITE);
+    mesh->m_vertices.emplace_back(Vector3(hw, hh, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(1.0f, 0.0f), Color::WHITE);
+    mesh->m_vertices.emplace_back(Vector3(-hw, hh, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(0.0f, 0.0f), Color::WHITE);
+
+    mesh->addTriangle(0, 1, 2);
+    mesh->addTriangle(0, 2, 3);
+
     mesh->calculateBoundingBox();
+    mesh->calculateFaceNormals();
+    mesh->ensureTangents();
     return mesh;
 }
 
 Mesh* Mesh::createTriangle(float size) {
     Mesh* mesh = new Mesh();
     float half = size * 0.5f;
-    
-    Vector3 normal(0, 0, 1);
-    
-    Vertex v0(Vector3(0, half, 0), normal, Vector2(0.5f, 0), Color::RED);
-    Vertex v1(Vector3(-half, -half, 0), normal, Vector2(0, 1), Color::GREEN);
-    Vertex v2(Vector3(half, -half, 0), normal, Vector2(1, 1), Color::BLUE);
-    
-    mesh->addTriangle(v0, v1, v2);
-    
+
+    mesh->m_vertices.emplace_back(Vector3(0.0f, half, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(0.5f, 0.0f), Color::WHITE);
+    mesh->m_vertices.emplace_back(Vector3(-half, -half, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(0.0f, 1.0f), Color::WHITE);
+    mesh->m_vertices.emplace_back(Vector3(half, -half, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(1.0f, 1.0f), Color::WHITE);
+
+    mesh->addTriangle(0, 1, 2);
     mesh->calculateBoundingBox();
+    mesh->calculateFaceNormals();
+    mesh->ensureTangents();
     return mesh;
 }
 
 Mesh* Mesh::createSphere(float radius, int segments) {
     Mesh* mesh = new Mesh();
-    
-    // 简化实现：创建一个八面体作为球体近似
-    // 在实际项目中，应该使用更复杂的球体生成算法
-    
-    // 6个顶点
-    mesh->addVertex(Vertex(Vector3(0, radius, 0), Vector3(0, 1, 0), Vector2(0.5f, 0), Color::WHITE));    // 顶点
-    mesh->addVertex(Vertex(Vector3(0, -radius, 0), Vector3(0, -1, 0), Vector2(0.5f, 1), Color::WHITE));  // 底点
-    mesh->addVertex(Vertex(Vector3(radius, 0, 0), Vector3(1, 0, 0), Vector2(1, 0.5f), Color::WHITE));    // 右
-    mesh->addVertex(Vertex(Vector3(-radius, 0, 0), Vector3(-1, 0, 0), Vector2(0, 0.5f), Color::WHITE));  // 左
-    mesh->addVertex(Vertex(Vector3(0, 0, radius), Vector3(0, 0, 1), Vector2(0.5f, 0.25f), Color::WHITE)); // 前
-    mesh->addVertex(Vertex(Vector3(0, 0, -radius), Vector3(0, 0, -1), Vector2(0.5f, 0.75f), Color::WHITE)); // 后
-    
-    // 8个三角形面
-    mesh->addTriangle(0, 2, 4); // 上右前
-    mesh->addTriangle(0, 4, 3); // 上前左
-    mesh->addTriangle(0, 3, 5); // 上左后
-    mesh->addTriangle(0, 5, 2); // 上后右
-    mesh->addTriangle(1, 4, 2); // 下前右
-    mesh->addTriangle(1, 3, 4); // 下左前
-    mesh->addTriangle(1, 5, 3); // 下后左
-    mesh->addTriangle(1, 2, 5); // 下右后
-    
-    mesh->calculateNormals();
+    int rings = std::max(1, segments);
+
+    for (int y = 0; y <= rings; ++y) {
+        float v = static_cast<float>(y) / static_cast<float>(rings);
+        float theta = v * PI;
+        float sinTheta = std::sin(theta);
+        float cosTheta = std::cos(theta);
+
+        for (int x = 0; x <= segments; ++x) {
+            float u = static_cast<float>(x) / static_cast<float>(segments);
+            float phi = u * TAU;
+            float sinPhi = std::sin(phi);
+            float cosPhi = std::cos(phi);
+
+            Vector3 normal(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+            Vector3 position = normal * radius;
+            mesh->m_vertices.emplace_back(position, normal, Vector2(u, 1.0f - v), Color::WHITE);
+        }
+    }
+
+    int columns = segments + 1;
+    for (int y = 0; y < rings; ++y) {
+        for (int x = 0; x < segments; ++x) {
+            int i0 = y * columns + x;
+            int i1 = i0 + 1;
+            int i2 = i0 + columns;
+            int i3 = i2 + 1;
+
+            mesh->addTriangle(i0, i2, i1);
+            mesh->addTriangle(i1, i2, i3);
+        }
+    }
+
     mesh->calculateBoundingBox();
+    mesh->calculateFaceNormals();
+    mesh->ensureTangents();
     return mesh;
 }
 
 Mesh* Mesh::createPlane(float width, float height, int subdivisions) {
-    // 简化实现：创建一个四边形作为平面
-    return createQuad(width, height);
+    Mesh* mesh = new Mesh();
+    int steps = std::max(1, subdivisions);
+
+    for (int y = 0; y <= steps; ++y) {
+        float fy = static_cast<float>(y) / static_cast<float>(steps);
+        float posY = height * (fy - 0.5f);
+        for (int x = 0; x <= steps; ++x) {
+            float fx = static_cast<float>(x) / static_cast<float>(steps);
+            float posX = width * (fx - 0.5f);
+            mesh->m_vertices.emplace_back(Vector3(posX, posY, 0.0f), Vector3(0.0f, 0.0f, 1.0f), Vector2(fx, 1.0f - fy), Color::WHITE);
+        }
+    }
+
+    int stride = steps + 1;
+    for (int y = 0; y < steps; ++y) {
+        for (int x = 0; x < steps; ++x) {
+            int i0 = y * stride + x;
+            int i1 = i0 + 1;
+            int i2 = i0 + stride;
+            int i3 = i2 + 1;
+
+            mesh->addTriangle(i0, i2, i1);
+            mesh->addTriangle(i1, i2, i3);
+        }
+    }
+
+    mesh->calculateBoundingBox();
+    mesh->calculateFaceNormals();
+    mesh->ensureTangents();
+    return mesh;
 }
 
-Mesh* Mesh::loadFromFile(const std::string& filename) {
-    // 简单实现：目前不支持文件加载
-    // 在实际项目中，这里应该实现OBJ、PLY等格式的加载器
-    
-    // 返回一个默认立方体
-    return createCube(1.0f);
+Mesh* Mesh::loadFromFile(const std::string& /*filename*/) {
+    return createQuad();
 }
 
 } // namespace Scene

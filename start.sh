@@ -1,44 +1,42 @@
 #!/bin/bash
+export PATH="/opt/homebrew/bin:$PATH"
 
-# 显示启动信息
+# 确保可以找到 Homebrew 安装的 cmake
+export PATH="/opt/homebrew/bin:$PATH"
+
+BUILD_DIR="build"
+CMAKE_FLAGS="-DENABLE_SDL_PREVIEW=ON"
+
 echo "==========================================="
 echo "     SDL 图形学演示程序启动脚本"
 echo "==========================================="
 
-# 检查构建目录是否存在，如果不存在则创建
-if [ ! -d "build" ]; then
-    echo "创建 build 目录..."
-    mkdir -p build
+echo "清理旧的构建结果..."
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+
+cd "$BUILD_DIR" || exit 1
+
+echo "正在构建程序 (cmake $CMAKE_FLAGS).."
+cmake $CMAKE_FLAGS ..
+if [ $? -ne 0 ]; then
+    echo "CMake 配置失败"
+    exit 1
 fi
 
-# 切换到构建目录
-cd build
-
-# 检查是否需要重新构建
-if [ ! -f "graphic-study-demo" ] || [ "$(find ../src -name "*.cpp" -newer graphic-study-demo | wc -l)" -gt 0 ]; then
-    echo "正在构建程序..."
-    cmake ..
-    make
-    
-    # 检查构建是否成功
-    if [ $? -ne 0 ]; then
-        echo "构建失败，请检查错误信息"
-        exit 1
-    fi
-else
-    echo "使用现有的构建结果..."
+cmake --build .
+if [ $? -ne 0 ]; then
+    echo "构建失败，请检查错误信息"
+    exit 1
 fi
 
-# 运行程序
 echo "启动程序..."
 echo "---------------------------------------------"
 echo "按 ESC 键或关闭窗口退出程序"
 echo "---------------------------------------------"
 
-# 使用当前终端运行程序
-./graphic-study-demo
+./graphic-study-demo "$@"
 
-# 程序退出后显示信息
 echo "---------------------------------------------"
 echo "程序已退出"
 echo "---------------------------------------------"

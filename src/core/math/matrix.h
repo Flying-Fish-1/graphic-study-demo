@@ -43,6 +43,7 @@ struct Matrix4 {
     // 数学运算
     Matrix4 operator*(const Matrix4& other) const;
     Vector3 operator*(const Vector3& v) const;
+    Vector4 operator*(const Vector4& v) const;
     
     // 静态创建方法
     static Matrix4 identity();

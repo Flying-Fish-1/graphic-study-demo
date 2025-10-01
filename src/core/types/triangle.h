@@ -33,18 +33,6 @@ struct Triangle {
     Triangle(const Vertex& v0, const Vertex& v1, const Vertex& v2);
     
     /**
-     * @brief 计算面法向量
-     * 使用叉积计算平面法向量
-     */
-    void calculateNormal();
-    
-    /**
-     * @brief 计算平均深度
-     * 用于深度排序
-     */
-    void calculateDepth();
-    
-    /**
      * @brief 检查是否为背面
      * @param viewDir 视线方向
      * @return 如果是背面返回true
@@ -69,12 +57,6 @@ struct Triangle {
      * @return 点是否在三角形内
      */
     bool getBarycentricCoords(const Vector2& point, float& u, float& v, float& w) const;
-    
-    /**
-     * @brief 应用变换矩阵
-     * @param transform 变换矩阵
-     */
-    void transform(const Matrix4& transform);
     
     /**
      * @brief 计算三角形面积

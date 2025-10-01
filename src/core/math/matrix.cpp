@@ -1,4 +1,5 @@
 #include "matrix.h"
+#include "vector.h"
 #include <cmath>
 
 namespace Core {
@@ -118,6 +119,15 @@ Vector3 Matrix4::operator*(const Vector3& v) const {
     );
 }
 
+Vector4 Matrix4::operator*(const Vector4& v) const {
+    return Vector4(
+        m[0] * v.x + m[1] * v.y + m[2] * v.z + m[3] * v.w,
+        m[4] * v.x + m[5] * v.y + m[6] * v.z + m[7] * v.w,
+        m[8] * v.x + m[9] * v.y + m[10] * v.z + m[11] * v.w,
+        m[12] * v.x + m[13] * v.y + m[14] * v.z + m[15] * v.w
+    );
+}
+
 Vector3 Matrix4::transform(const Vector3& v) const {
     return *this * v;
 }
@@ -198,12 +208,15 @@ Matrix4 Matrix4::scale(float sx, float sy, float sz) {
 }
 
 Matrix4 Matrix4::perspective(float fov, float aspect, float near, float far) {
-    float tanHalfFov = std::tan(fov * 0.5f);
+    float f = 1.0f / std::tan(fov * 0.5f);
+    float range = far - near;
+
+    // Left-handed / D3D-style 透视矩阵，NDC Z ∈ [0,1]
     return Matrix4{
-        1.0f / (aspect * tanHalfFov), 0, 0, 0,
-        0, 1.0f / tanHalfFov, 0, 0,
-        0, 0, -(far + near) / (far - near), -(2.0f * far * near) / (far - near),
-        0, 0, -1, 0
+        f / aspect, 0.0f, 0.0f, 0.0f,
+        0.0f, f, 0.0f, 0.0f,
+        0.0f, 0.0f, far / range, -near * far / range,
+        0.0f, 0.0f, 1.0f, 0.0f
     };
 }
 

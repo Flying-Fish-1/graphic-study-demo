@@ -45,8 +45,14 @@ Vector3 Vector3::normalize() const {
     return len > 0 ? *this / len : Vector3(0, 0, 0);
 }
 
-Vector2 Vector3::xy() const { 
-    return Vector2(x, y); 
+Vector3 Vector3::reflect(const Vector3& normal) const {
+    // 反射公式: R = V - 2(N·V)N
+    float dotProduct = this->dot(normal);
+    return *this - normal * (2.0f * dotProduct);
+}
+
+Vector2 Vector3::xy() const {
+    return Vector2(x, y);
 }
 
 // ==================== Vector4 实现 ====================
