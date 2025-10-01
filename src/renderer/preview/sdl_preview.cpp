@@ -126,6 +126,52 @@ void SdlPreview::present(const Pipeline::RenderTarget& target, const std::string
     }
 }
 
+bool SdlPreview::presentOnce(const Pipeline::RenderTarget& target, const std::string& windowTitle) {
+    if (!m_objects || !m_objects->renderer || !m_objects->texture) {
+        return false;
+    }
+
+    SDL_SetWindowTitle(m_objects->window, windowTitle.c_str());
+
+    void* pixels = nullptr;
+    int pitch = 0;
+    if (SDL_LockTexture(m_objects->texture, nullptr, &pixels, &pitch) != 0) {
+        SDL_Log("SDL_LockTexture failed: %s", SDL_GetError());
+        return false;
+    }
+
+    const auto& colorBuffer = target.getColorBuffer();
+    for (int y = 0; y < m_height; ++y) {
+        auto* row = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(pixels) + y * pitch);
+        for (int x = 0; x < m_width; ++x) {
+            const auto& color = colorBuffer[y * m_width + x];
+            uint8_t r = static_cast<uint8_t>(std::clamp(color.r, 0.0f, 1.0f) * 255.0f);
+            uint8_t g = static_cast<uint8_t>(std::clamp(color.g, 0.0f, 1.0f) * 255.0f);
+            uint8_t b = static_cast<uint8_t>(std::clamp(color.b, 0.0f, 1.0f) * 255.0f);
+            uint8_t a = static_cast<uint8_t>(std::clamp(color.a, 0.0f, 1.0f) * 255.0f);
+            row[x] = SDL_MapRGBA(m_objects->pixelFormat, r, g, b, a);
+        }
+    }
+
+    SDL_UnlockTexture(m_objects->texture);
+
+    SDL_RenderClear(m_objects->renderer);
+    SDL_RenderCopy(m_objects->renderer, m_objects->texture, nullptr, nullptr);
+    SDL_RenderPresent(m_objects->renderer);
+    return true;
+}
+
+bool SdlPreview::pollEvents() {
+    if (!m_objects) return false;
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace Preview
 } // namespace Renderer
 

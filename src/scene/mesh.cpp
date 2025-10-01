@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <array>
 
 namespace Scene {
 
@@ -189,6 +190,231 @@ Mesh* Mesh::createCube(float size) {
     return mesh;
 }
 
+static void emitCubeFaces(Mesh* mesh, float half, const std::vector<Color>& faceColors, bool inwardNormals) {
+    std::vector<Vector3> positions = {
+        {-half, -half, -half}, {half, -half, -half}, {half, half, -half}, {-half, half, -half},
+        {-half, -half, half},  {half, -half, half},  {half, half, half},  {-half, half, half}
+    };
+
+    std::vector<Vector3> normals = {
+        {0, 0, -1}, {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, -1, 0}
+    };
+    if (inwardNormals) {
+        for (auto& n : normals) n = n * -1.0f;
+    }
+
+    std::vector<Vector2> uvs = {{0,0},{1,0},{1,1},{0,1}};
+    struct Face { int a,b,c,d; int n; };
+    std::vector<Face> faces = {
+        {1,0,3,2,0}, // back
+        {4,5,6,7,1}, // front
+        {4,0,3,7,2}, // left
+        {5,1,2,6,3}, // right
+        {3,7,6,2,4}, // top
+        {0,1,5,4,5}  // bottom
+    };
+
+    for (size_t i = 0; i < faces.size(); ++i) {
+        auto f = faces[i];
+        Vector3 n = normals[f.n];
+        Vector3 t(1.0f, 0.0f, 0.0f);
+        Vector3 b(0.0f, 1.0f, 0.0f);
+        Color col = i < faceColors.size() ? faceColors[i] : Color::WHITE;
+        int i0 = mesh->addVertex(Vertex(positions[f.a], n, uvs[0], col, t, b));
+        int i1 = mesh->addVertex(Vertex(positions[f.b], n, uvs[1], col, t, b));
+        int i2 = mesh->addVertex(Vertex(positions[f.c], n, uvs[2], col, t, b));
+        int i3 = mesh->addVertex(Vertex(positions[f.d], n, uvs[3], col, t, b));
+        if (!inwardNormals) {
+            mesh->addTriangle(i0, i1, i2);
+            mesh->addTriangle(i0, i2, i3);
+        } else {
+            // 内表面反向缝合，保持从内看为正面
+            mesh->addTriangle(i0, i2, i1);
+            mesh->addTriangle(i0, i3, i2);
+        }
+    }
+}
+
+namespace {
+
+using Core::Math::Vector2;
+using Core::Math::Vector3;
+using Core::Types::Color;
+using Core::Types::Vertex;
+
+static const Vector2 kQuadUVs[4] = {
+    Vector2(0.0f, 0.0f),
+    Vector2(1.0f, 0.0f),
+    Vector2(1.0f, 1.0f),
+    Vector2(0.0f, 1.0f)
+};
+
+inline Vector3 defaultTangent(const Vector3& normal) {
+    Vector3 tangent = std::fabs(normal.x) > 0.5f ? Vector3(0.0f, 1.0f, 0.0f) : Vector3(1.0f, 0.0f, 0.0f);
+    Vector3 adjusted = tangent - normal * tangent.dot(normal);
+    if (adjusted.lengthSquared() <= 1e-8f) {
+        adjusted = Vector3(0.0f, 0.0f, 1.0f);
+    }
+    return adjusted.normalize();
+}
+
+inline Vector3 defaultBitangent(const Vector3& normal, const Vector3& tangent) {
+    Vector3 bitangent = normal.cross(tangent);
+    if (bitangent.lengthSquared() <= 1e-8f) {
+        bitangent = Vector3(0.0f, 1.0f, 0.0f);
+    }
+    return bitangent.normalize();
+}
+
+void appendQuad(Scene::Mesh* mesh,
+                const std::array<Vector3, 4>& positions,
+                const Vector3& normal,
+                const Color& color,
+                bool invertWinding = false) {
+    Vector3 n = normal.normalize();
+    Vector3 tangent = defaultTangent(n);
+    Vector3 bitangent = defaultBitangent(n, tangent);
+
+    int indices[4];
+    for (int i = 0; i < 4; ++i) {
+        Vector3 finalNormal = invertWinding ? n * -1.0f : n;
+        indices[i] = mesh->addVertex(Vertex(positions[i], finalNormal, kQuadUVs[i], color, tangent, bitangent));
+    }
+
+    if (!invertWinding) {
+        mesh->addTriangle(indices[0], indices[1], indices[2]);
+        mesh->addTriangle(indices[0], indices[2], indices[3]);
+    } else {
+        mesh->addTriangle(indices[0], indices[2], indices[1]);
+        mesh->addTriangle(indices[0], indices[3], indices[2]);
+    }
+}
+
+Vector3 edgeWallNormal(const Vector3& outerA,
+                       const Vector3& outerB,
+                       const Vector3& innerA) {
+    Vector3 edgeDir = outerB - outerA;
+    Vector3 inward = innerA - outerA;
+    Vector3 n = edgeDir.cross(inward);
+    if (n.lengthSquared() <= 1e-8f) {
+        // fallback：避免零向量
+        n = edgeDir.cross(Vector3(0.0f, 1.0f, 0.0f));
+        if (n.lengthSquared() <= 1e-8f) {
+            n = edgeDir.cross(Vector3(0.0f, 0.0f, 1.0f));
+        }
+    }
+    return n.normalize();
+}
+
+} // namespace
+
+Mesh* Mesh::createHollowCube(float outerSize, float innerSize) {
+    using Core::Math::Vector2;
+    using Core::Math::Vector3;
+    using Core::Types::Color;
+
+    Mesh* mesh = new Mesh();
+    float ho = outerSize * 0.5f;
+    float hi = innerSize * 0.5f;
+    if (innerSize >= outerSize || hi <= 0.0f) {
+        return createCube(outerSize);
+    }
+
+    std::vector<Vector3> outer = {
+        {-ho, -ho, -ho}, {ho, -ho, -ho}, {ho, ho, -ho}, {-ho, ho, -ho},
+        {-ho, -ho,  ho}, {ho, -ho,  ho}, {ho, ho,  ho}, {-ho, ho,  ho}
+    };
+    std::vector<Vector3> inner = {
+        {-hi, -hi, -hi}, {hi, -hi, -hi}, {hi, hi, -hi}, {-hi, hi, -hi},
+        {-hi, -hi,  hi}, {hi, -hi,  hi}, {hi, hi,  hi}, {-hi, hi,  hi}
+    };
+
+    const std::vector<Vector3> faceNormals = {
+        {0, 0, -1}, {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, -1, 0}
+    };
+    const std::vector<Color> faceColors = {
+        Color(1.0f, 0.2f, 0.2f, 0.6f),
+        Color(0.2f, 1.0f, 0.8f, 0.6f),
+        Color(0.2f, 0.2f, 1.0f, 0.6f),
+        Color(1.0f, 1.0f, 0.2f, 0.6f),
+        Color(1.0f, 0.5f, 0.2f, 0.6f),
+        Color(0.2f, 1.0f, 1.0f, 0.6f)
+    };
+
+    const int faces[6][4] = {
+        {1, 0, 3, 2}, // back
+        {4, 5, 6, 7}, // front
+        {4, 0, 3, 7}, // left
+        {5, 1, 2, 6}, // right
+        {3, 7, 6, 2}, // top
+        {0, 1, 5, 4}  // bottom
+    };
+
+    // 外层
+    for (int f = 0; f < 6; ++f) {
+        std::array<Vector3, 4> quad{};
+        for (int i = 0; i < 4; ++i) {
+            quad[i] = outer[faces[f][i]];
+        }
+        appendQuad(mesh, quad, faceNormals[f], faceColors[f]);
+    }
+
+    for (int f = 0; f < 6; ++f) {
+        std::array<Vector3, 4> quad{};
+        for (int i = 0; i < 4; ++i) {
+            quad[i] = inner[faces[f][3 - i]];
+        }
+        appendQuad(mesh, quad, -faceNormals[f], faceColors[f], true);
+    }
+
+    const std::array<std::pair<int, int>, 12> uniqueEdges = {
+        std::make_pair(0, 1), std::make_pair(1, 2), std::make_pair(2, 3), std::make_pair(3, 0),
+        std::make_pair(4, 5), std::make_pair(5, 6), std::make_pair(6, 7), std::make_pair(7, 4),
+        std::make_pair(0, 4), std::make_pair(1, 5), std::make_pair(2, 6), std::make_pair(3, 7)
+    };
+
+    auto edgeColors = [&](int a, int b) {
+        Color accum(0.0f, 0.0f, 0.0f, 0.0f);
+        int count = 0;
+        for (int f = 0; f < 6; ++f) {
+            bool hasA = false;
+            bool hasB = false;
+            for (int i = 0; i < 4; ++i) {
+                if (faces[f][i] == a) hasA = true;
+                if (faces[f][i] == b) hasB = true;
+            }
+            if (hasA && hasB) {
+                accum = accum + faceColors[f];
+                ++count;
+            }
+        }
+        if (count == 0) {
+            return Color::WHITE;
+        }
+        float inv = 1.0f / static_cast<float>(count);
+        return Color(accum.r * inv, accum.g * inv, accum.b * inv, accum.a * inv);
+    };
+
+    for (const auto& edge : uniqueEdges) {
+        int a = edge.first;
+        int b = edge.second;
+        Vector3 p0 = outer[a];
+        Vector3 p1 = outer[b];
+        Vector3 p2 = inner[b];
+        Vector3 p3 = inner[a];
+
+        Vector3 normal = edgeWallNormal(p0, p1, p3);
+        Color color = edgeColors(a, b);
+        std::array<Vector3, 4> quad = {p0, p1, p2, p3};
+        appendQuad(mesh, quad, normal, color);
+    }
+
+    mesh->calculateBoundingBox();
+    mesh->calculateFaceNormals();
+    mesh->ensureTangents();
+    return mesh;
+}
+
 Mesh* Mesh::createQuad(float width, float height) {
     Mesh* mesh = new Mesh();
     float hw = width * 0.5f;
@@ -242,6 +468,51 @@ Mesh* Mesh::createSphere(float radius, int segments) {
             Vector3 normal(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
             Vector3 position = normal * radius;
             mesh->m_vertices.emplace_back(position, normal, Vector2(u, 1.0f - v), Color::WHITE);
+        }
+    }
+
+    int columns = segments + 1;
+    for (int y = 0; y < rings; ++y) {
+        for (int x = 0; x < segments; ++x) {
+            int i0 = y * columns + x;
+            int i1 = i0 + 1;
+            int i2 = i0 + columns;
+            int i3 = i2 + 1;
+
+            mesh->addTriangle(i0, i2, i1);
+            mesh->addTriangle(i1, i2, i3);
+        }
+    }
+
+    mesh->calculateBoundingBox();
+    mesh->calculateFaceNormals();
+    mesh->ensureTangents();
+    return mesh;
+}
+
+Mesh* Mesh::createGradientSphere(float radius, int segments,
+                                 const Color& topColor,
+                                 const Color& bottomColor) {
+    Mesh* mesh = new Mesh();
+    int rings = std::max(1, segments);
+
+    for (int y = 0; y <= rings; ++y) {
+        float v = static_cast<float>(y) / static_cast<float>(rings);
+        float theta = v * PI;
+        float sinTheta = std::sin(theta);
+        float cosTheta = std::cos(theta);
+
+        for (int x = 0; x <= segments; ++x) {
+            float u = static_cast<float>(x) / static_cast<float>(segments);
+            float phi = u * TAU;
+            float sinPhi = std::sin(phi);
+            float cosPhi = std::cos(phi);
+
+            Vector3 normal(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+            Vector3 position = normal * radius;
+            // 纵向渐变：v=0 顶部→topColor，v=1 底部→bottomColor
+            Color col = topColor * (1.0f - v) + bottomColor * v;
+            mesh->m_vertices.emplace_back(position, normal, Vector2(u, 1.0f - v), col);
         }
     }
 

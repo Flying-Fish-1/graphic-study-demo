@@ -16,6 +16,11 @@ public:
     bool initialize();
     void present(const Pipeline::RenderTarget& target, const std::string& windowTitle);
 
+    // 非阻塞：上传并呈现一帧，不进入内部事件循环
+    bool presentOnce(const Pipeline::RenderTarget& target, const std::string& windowTitle);
+    // 轮询事件：返回false表示收到退出请求
+    bool pollEvents();
+
 private:
     int m_width;
     int m_height;

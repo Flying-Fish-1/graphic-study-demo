@@ -63,9 +63,14 @@ public:
     void ensureTangents();
 
     static Mesh* createCube(float size = 1.0f);
+    // 生成外立方体与内立方体（法线向内）的壳体，实现“挖空”效果
+    static Mesh* createHollowCube(float outerSize, float innerSize);
     static Mesh* createQuad(float width = 1.0f, float height = 1.0f);
     static Mesh* createTriangle(float size = 1.0f);
     static Mesh* createSphere(float radius = 1.0f, int segments = 16);
+    static Mesh* createGradientSphere(float radius, int segments,
+                                      const Color& topColor,
+                                      const Color& bottomColor);
     static Mesh* createPlane(float width = 1.0f, float height = 1.0f, int subdivisions = 1);
 
     static Mesh* loadFromFile(const std::string& filename);

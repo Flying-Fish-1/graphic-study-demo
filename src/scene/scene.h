@@ -49,6 +49,12 @@ public:
 
     const Core::Types::Color& getAmbientLight() const { return m_ambientLight; }
     void setAmbientLight(const Core::Types::Color& color) { m_ambientLight = color; }
+
+    void setObjectTransform(int index, const Matrix4& transform) {
+        if (index >= 0 && index < static_cast<int>(m_objects.size())) {
+            m_objects[static_cast<std::size_t>(index)].transform = transform;
+        }
+    }
 };
 
 } // namespace Scene

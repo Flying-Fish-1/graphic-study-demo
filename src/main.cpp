@@ -12,6 +12,9 @@
 #include "renderer/pipeline/software_renderer.h"
 #include "renderer/lighting/light.h"
 #include "renderer/preview/sdl_preview.h"
+#ifdef ENABLE_SDL_PREVIEW
+#include <SDL2/SDL.h>
+#endif
 
 namespace {
 struct RenderOptions {
@@ -86,7 +89,11 @@ int main(int argc, char** argv) {
     scene.setCamera(camera.get());
     scene.setAmbientLight(Core::Types::Color(0.5f, 0.5f, 0.5f, 1.0f));
 
-    auto mesh = std::unique_ptr<Scene::Mesh>(Scene::Mesh::createCube(3.0f));
+    auto mesh = std::unique_ptr<Scene::Mesh>(Scene::Mesh::createHollowCube(3.0f, 2.2f));
+    // 额外添加一个颜色渐变的三角形球体
+    auto gradSphere = std::unique_ptr<Scene::Mesh>(Scene::Mesh::createGradientSphere(1.8f, 64,
+        Core::Types::Color(1.0f, 0.0f, 0.0f, 1.0f),
+        Core::Types::Color(0.0f, 0.5f, 1.0f, 1.0f)));
 
     auto material = std::unique_ptr<Core::Types::Material>(Core::Types::Material::createRedPlastic());
     //auto texture = std::unique_ptr<Core::Types::Texture>(Core::Types::Texture::createSolidColor(Core::Types::Color::RED, 256, 256));
@@ -95,8 +102,17 @@ int main(int argc, char** argv) {
     material->setSpecular(Core::Types::Color(1.0f, 1.0f, 1.0f, 0.8f));
     material->setShininess(84.0f);
     mesh->setMaterial(material.get());
+    // 为球体使用高光更明显的材质
+    auto sphereMat = std::unique_ptr<Core::Types::Material>(Core::Types::Material::createWhiteDiffuse());
+    sphereMat->setSpecular(Core::Types::Color(0.2f, 0.2f, 0.2f, 1.0f));
+    sphereMat->setShininess(32.0f);
+    gradSphere->setMaterial(sphereMat.get());
 
-    scene.addObject(mesh.get());
+    int cubeIndex = scene.addObject(mesh.get());
+    // 将球体放到立方体旁边
+    Scene::SceneObject rightObj;
+    Core::Math::Matrix4 sphereX = Core::Math::Matrix4::translation(3.5f, 0.0f, 0.0f);
+    int sphereIndex = scene.addObject(gradSphere.get(), sphereX);
 
     auto pointLight = std::make_unique<Renderer::Lighting::PointLight>(Core::Math::Vector3(2.5f, 2.5f, options.cameraDistance - 0.5f), Core::Types::Color::WHITE, 5.0f, 18.0f);
     auto dirLight = std::make_unique<Renderer::Lighting::DirectionalLight>(Core::Math::Vector3(-1.0f, -1.0f, -1.0f), Core::Types::Color(1.0f, 0.95f, 0.85f, 1.0f), 0.4f);
@@ -106,10 +122,44 @@ int main(int argc, char** argv) {
     Renderer::Pipeline::SoftwareRendererSettings settings;
     settings.width = options.width;
     settings.height = options.height;
-    settings.ssaaFactor = 4;
+    settings.ssaaFactor = 1;
+    //settings.fresnelForTranslucent = true;
+    //settings.fresnelF0 = 0.04f;
 
     Renderer::Pipeline::SoftwareRenderer renderer(settings);
+
+#ifdef ENABLE_SDL_PREVIEW
+    if (options.previewWindow) {
+        Renderer::Preview::SdlPreview preview(settings.width, settings.height);
+        if (preview.initialize()) {
+            bool running = true;
+            uint32_t lastTicks = SDL_GetTicks();
+            float angle = 0.0f;
+            while (running) {
+                running = preview.pollEvents();
+                uint32_t now = SDL_GetTicks();
+                float dt = (now - lastTicks) * 0.001f;
+                lastTicks = now;
+
+                angle += dt;
+                Core::Math::Matrix4 rotY = Core::Math::Matrix4::rotationY(angle);
+                Core::Math::Matrix4 rotX = Core::Math::Matrix4::rotationX(angle * 0.5f);
+                scene.setObjectTransform(cubeIndex, rotY * rotX);
+
+                renderer.render(scene);
+                preview.presentOnce(renderer.getRenderTarget(), "软件渲染预览 - 旋转立方体");
+
+                SDL_Delay(16);
+            }
+        } else {
+            std::cerr << "SDL 预览初始化失败，跳过窗口显示" << std::endl;
+        }
+    } else {
+        renderer.render(scene);
+    }
+#else
     renderer.render(scene);
+#endif
 
 
     if (options.saveImage) {

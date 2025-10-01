@@ -20,6 +20,10 @@ set(SOURCES
     src/core/types/texture.cpp
     src/renderer/pipeline/render_target.cpp
     src/renderer/pipeline/geometry_stage.cpp
+    src/renderer/pipeline/geometry_processor.cpp
+    src/renderer/pipeline/render_queue.cpp
+    src/renderer/pipeline/shading_pipeline.cpp
+    src/renderer/pipeline/triangle_rasterizer.cpp
     src/renderer/pipeline/software_renderer.cpp
     src/renderer/lighting/light.cpp
     src/renderer/effects/ssaa.cpp
