@@ -27,6 +27,7 @@ set(SOURCES
     src/renderer/pipeline/software_renderer.cpp
     src/renderer/lighting/light.cpp
     src/renderer/effects/ssaa.cpp
+    src/util/ffmpeg_utils.cpp
     src/scene/mesh.cpp
     src/scene/camera.cpp
     src/scene/scene.cpp

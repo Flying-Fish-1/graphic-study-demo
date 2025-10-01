@@ -46,21 +46,45 @@ Core::Types::Color ShadingPipeline::shade(const GeometryVertex& interpolated,
     Vector3 viewDir = (viewPos - interpolated.worldPosition).normalize();
 
     float baseAlpha = std::clamp(baseColor.a, 0.0f, 1.0f);
-    bool isTranslucent = baseAlpha < 0.999f;
-    bool applyFresnel = m_settings.fresnelForTranslucent && isTranslucent;
+    bool useFresnel = m_settings.enableFresnel;
 
     Color ambient = sceneAmbient * baseColor;
     ambient.a = 0.0f;
 
-    Color diffuseAccum = ambient;
-    Color specularAccum(0.0f, 0.0f, 0.0f, 0.0f);
+    auto clamp01 = [](float value) {
+        return std::clamp(value, 0.0f, 1.0f);
+    };
 
-    float fresnelView = 0.0f;
-    if (applyFresnel) {
+    Color specularColor = material ? material->getSpecular() : Color(1.0f, 1.0f, 1.0f, 1.0f);
+    Color fresnelF0(
+        clamp01(material ? specularColor.r : m_settings.fresnelF0),
+        clamp01(material ? specularColor.g : m_settings.fresnelF0),
+        clamp01(material ? specularColor.b : m_settings.fresnelF0),
+        0.0f);
+
+    auto schlickFresnel = [&](float cosTheta) {
+        float c = std::clamp(cosTheta, 0.0f, 1.0f);
+        float factor = std::pow(1.0f - c, 5.0f);
+        return Color(
+            fresnelF0.r + (1.0f - fresnelF0.r) * factor,
+            fresnelF0.g + (1.0f - fresnelF0.g) * factor,
+            fresnelF0.b + (1.0f - fresnelF0.b) * factor,
+            0.0f);
+    };
+
+    Color diffuseWeight(1.0f, 1.0f, 1.0f, 0.0f);
+    if (useFresnel) {
         float VdotN = std::max(0.0f, viewDir.dot(normal));
-        fresnelView = m_settings.fresnelF0 + (1.0f - m_settings.fresnelF0) * std::pow(1.0f - VdotN, 5.0f);
-        diffuseAccum = diffuseAccum * (1.0f - fresnelView);
+        Color fresnelView = schlickFresnel(VdotN);
+        diffuseWeight = Color(
+            1.0f - fresnelView.r,
+            1.0f - fresnelView.g,
+            1.0f - fresnelView.b,
+            0.0f);
     }
+
+    Color diffuseAccum = useFresnel ? ambient * diffuseWeight : ambient;
+    Color specularAccum(0.0f, 0.0f, 0.0f, 0.0f);
 
     for (const auto& light : lights) {
         if (!light || !light->isVisible(interpolated.worldPosition)) {
@@ -83,11 +107,8 @@ Core::Types::Color ShadingPipeline::shade(const GeometryVertex& interpolated,
         Color diffuse = baseColor * lightColor * NdotL;
         diffuse.a = 0.0f;
 
-        float fresnel = 1.0f;
-        if (applyFresnel) {
-            float VdotH = std::max(0.0f, viewDir.dot(halfVector));
-            fresnel = m_settings.fresnelF0 + (1.0f - m_settings.fresnelF0) * std::pow(1.0f - VdotH, 5.0f);
-            diffuse = diffuse * (1.0f - fresnel);
+        if (useFresnel) {
+            diffuse = diffuse * diffuseWeight;
         }
 
         diffuseAccum = diffuseAccum + diffuse;
@@ -95,22 +116,24 @@ Core::Types::Color ShadingPipeline::shade(const GeometryVertex& interpolated,
         float NdotH = std::max(0.0f, normal.dot(halfVector));
         float specularFactor = std::pow(NdotH, specPower);
         if (specularFactor > 0.0f) {
-            Color specularColor = material ? material->getSpecular() : Color(1.0f, 1.0f, 1.0f, 1.0f);
-            Color specular = specularColor * lightColor * specularFactor;
-            if (applyFresnel) {
+            Color specular = lightColor * specularFactor;
+            if (useFresnel) {
+                float VdotH = std::max(0.0f, viewDir.dot(halfVector));
+                Color fresnel = schlickFresnel(VdotH);
                 specular = specular * fresnel;
+            } else {
+                specular = specular * specularColor;
             }
             specular.a = 0.0f;
             specularAccum = specularAccum + specular;
         }
     }
 
-    Color finalColor = diffuseAccum;
-    finalColor.a = baseAlpha;
-
-    finalColor.r = std::clamp(finalColor.r, 0.0f, 1.0f) * baseAlpha;
-    finalColor.g = std::clamp(finalColor.g, 0.0f, 1.0f) * baseAlpha;
-    finalColor.b = std::clamp(finalColor.b, 0.0f, 1.0f) * baseAlpha;
+    Color diffuseClamped(
+        std::clamp(diffuseAccum.r, 0.0f, 1.0f),
+        std::clamp(diffuseAccum.g, 0.0f, 1.0f),
+        std::clamp(diffuseAccum.b, 0.0f, 1.0f),
+        0.0f);
 
     Color specularClamped(
         std::clamp(specularAccum.r, 0.0f, 1.0f),
@@ -118,9 +141,15 @@ Core::Types::Color ShadingPipeline::shade(const GeometryVertex& interpolated,
         std::clamp(specularAccum.b, 0.0f, 1.0f),
         0.0f);
 
-    finalColor.r = std::clamp(finalColor.r + specularClamped.r, 0.0f, 1.0f);
-    finalColor.g = std::clamp(finalColor.g + specularClamped.g, 0.0f, 1.0f);
-    finalColor.b = std::clamp(finalColor.b + specularClamped.b, 0.0f, 1.0f);
+    Color finalColor(
+        diffuseClamped.r * baseAlpha + specularClamped.r,
+        diffuseClamped.g * baseAlpha + specularClamped.g,
+        diffuseClamped.b * baseAlpha + specularClamped.b,
+        baseAlpha);
+
+    finalColor.r = std::clamp(finalColor.r, 0.0f, 1.0f);
+    finalColor.g = std::clamp(finalColor.g, 0.0f, 1.0f);
+    finalColor.b = std::clamp(finalColor.b, 0.0f, 1.0f);
 
     return finalColor;
 }

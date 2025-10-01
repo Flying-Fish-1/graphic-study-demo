@@ -278,7 +278,9 @@ void appendQuad(Scene::Mesh* mesh,
     int indices[4];
     for (int i = 0; i < 4; ++i) {
         Vector3 finalNormal = invertWinding ? n * -1.0f : n;
-        indices[i] = mesh->addVertex(Vertex(positions[i], finalNormal, kQuadUVs[i], color, tangent, bitangent));
+        Vector3 finalTangent = invertWinding ? tangent * -1.0f : tangent;
+        Vector3 finalBitangent = invertWinding ? bitangent * -1.0f : bitangent;
+        indices[i] = mesh->addVertex(Vertex(positions[i], finalNormal, kQuadUVs[i], color, finalTangent, finalBitangent));
     }
 
     if (!invertWinding) {
@@ -313,12 +315,13 @@ Mesh* Mesh::createHollowCube(float outerSize, float innerSize) {
     using Core::Math::Vector3;
     using Core::Types::Color;
 
+    if (innerSize >= outerSize || innerSize <= 0.0f) {
+        return createCube(outerSize);
+    }
+
     Mesh* mesh = new Mesh();
     float ho = outerSize * 0.5f;
     float hi = innerSize * 0.5f;
-    if (innerSize >= outerSize || hi <= 0.0f) {
-        return createCube(outerSize);
-    }
 
     std::vector<Vector3> outer = {
         {-ho, -ho, -ho}, {ho, -ho, -ho}, {ho, ho, -ho}, {-ho, ho, -ho},
@@ -362,9 +365,9 @@ Mesh* Mesh::createHollowCube(float outerSize, float innerSize) {
     for (int f = 0; f < 6; ++f) {
         std::array<Vector3, 4> quad{};
         for (int i = 0; i < 4; ++i) {
-            quad[i] = inner[faces[f][3 - i]];
+            quad[i] = inner[faces[f][i]];
         }
-        appendQuad(mesh, quad, -faceNormals[f], faceColors[f], true);
+        appendQuad(mesh, quad, faceNormals[f], faceColors[f], true);
     }
 
     const std::array<std::pair<int, int>, 12> uniqueEdges = {

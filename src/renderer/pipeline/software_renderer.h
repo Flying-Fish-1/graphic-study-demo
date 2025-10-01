@@ -15,8 +15,8 @@ struct SoftwareRendererSettings {
     bool perspectiveCorrect = true;
     bool backfaceCulling = true;
     int ssaaFactor = 1; // 1表示关闭；2=2xSSAA，3=3xSSAA，4=4xSSAA
-    bool fresnelForTranslucent = false; // 对半透明启用菲涅尔
-    float fresnelF0 = 0.04f; // 介质默认F0
+    bool enableFresnel = false; // 启用基于Schlick近似的菲涅尔反射
+    float fresnelF0 = 0.04f; // 无材质高光时的默认法线入射反射率
 };
 
 class SoftwareRenderer {

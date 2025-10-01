@@ -1,7 +1,12 @@
 #!/bin/bash
-export PATH="/opt/homebrew/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 确保可以找到 Homebrew 安装的 cmake
+# 优先使用仓库附带的 ffmpeg 可执行文件
+if [ -d "$SCRIPT_DIR/external/ffmpeg/bin" ]; then
+    export PATH="$SCRIPT_DIR/external/ffmpeg/bin:$PATH"
+fi
+
+# 确保可以找到 Homebrew 安装的工具链
 export PATH="/opt/homebrew/bin:$PATH"
 
 BUILD_DIR="build"
