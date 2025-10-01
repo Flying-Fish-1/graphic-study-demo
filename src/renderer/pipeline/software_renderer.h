@@ -19,6 +19,7 @@ struct SoftwareRendererSettings {
     int height = 600;
     bool perspectiveCorrect = true;
     bool backfaceCulling = true;
+    int ssaaFactor = 1; // 1表示关闭；2=2xSSAA，3=3xSSAA，4=4xSSAA
 };
 
 class SoftwareRenderer {
@@ -61,7 +62,8 @@ private:
                               const ScreenVertex& v1,
                               const ScreenVertex& v2,
                               const Core::Math::Vector3& cameraPos,
-                              Core::Math::Vector3& faceNormal) const;
+                              Core::Math::Vector3& faceNormal,
+                              bool applyCulling = true) const;
 
     RasterDerivatives computeRasterDerivatives(const ScreenVertex& v0,
                                                const ScreenVertex& v1,

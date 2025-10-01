@@ -161,12 +161,12 @@ Mesh* Mesh::createCube(float size) {
 
     struct Face { int a, b, c, d; Vector3 normal; Color color; };
     std::vector<Face> faces = {
-        {1, 0, 3, 2, normals[0], Color(1.0f, 0.2f, 0.2f)}, // back  - red
-        {4, 5, 6, 7, normals[1], Color(0.2f, 1.0f, 0.2f)}, // front - green
-        {4, 0, 3, 7, normals[2], Color(0.2f, 0.2f, 1.0f)}, // left  - blue
-        {5, 1, 2, 6, normals[3], Color(1.0f, 1.0f, 0.2f)}, // right - yellow
-        {3, 7, 6, 2, normals[4], Color(1.0f, 0.5f, 0.2f)}, // top   - orange
-        {0, 1, 5, 4, normals[5], Color(0.2f, 1.0f, 1.0f)}  // bottom- cyan
+        {1, 0, 3, 2, normals[0], Color(1.0f, 0.2f, 0.2f, 0.6f)}, // back  - red, semi-transparent
+        {4, 5, 6, 7, normals[1], Color(0.2f, 1.0f, 0.8f, 0.6f)}, // front - green, semi-transparent
+        {4, 0, 3, 7, normals[2], Color(0.2f, 0.2f, 1.0f, 0.6f)}, // left  - blue, semi-transparent
+        {5, 1, 2, 6, normals[3], Color(1.0f, 1.0f, 0.2f, 0.6f)}, // right - yellow, semi-transparent
+        {3, 7, 6, 2, normals[4], Color(1.0f, 0.5f, 0.2f, 0.6f)}, // top   - orange, semi-transparent
+        {0, 1, 5, 4, normals[5], Color(0.2f, 1.0f, 1.0f, 0.6f)}  // bottom- cyan, semi-transparent
     };
 
     for (const auto& face : faces) {

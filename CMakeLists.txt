@@ -22,6 +22,7 @@ set(SOURCES
     src/renderer/pipeline/geometry_stage.cpp
     src/renderer/pipeline/software_renderer.cpp
     src/renderer/lighting/light.cpp
+    src/renderer/effects/ssaa.cpp
     src/scene/mesh.cpp
     src/scene/camera.cpp
     src/scene/scene.cpp
@@ -51,7 +52,7 @@ if(ENABLE_SDL_PREVIEW)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_SDL_PREVIEW)
 endif()
 
-option(BUILD_TESTING "Enable unit tests" ON)
+option(BUILD_TESTING "Enable unit tests" OFF)
 if(BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)

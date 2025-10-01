@@ -84,20 +84,21 @@ int main(int argc, char** argv) {
                    Core::Math::Vector3(0.0f, 0.0f, 0.0f),
                    Core::Math::Vector3(0.0f, 1.0f, 0.0f));
     scene.setCamera(camera.get());
-    scene.setAmbientLight(Core::Types::Color(0.05f, 0.05f, 0.05f, 1.0f));
+    scene.setAmbientLight(Core::Types::Color(0.5f, 0.5f, 0.5f, 1.0f));
 
-    auto mesh = std::unique_ptr<Scene::Mesh>(Scene::Mesh::createCube(2.0f));
+    auto mesh = std::unique_ptr<Scene::Mesh>(Scene::Mesh::createCube(3.0f));
 
     auto material = std::unique_ptr<Core::Types::Material>(Core::Types::Material::createRedPlastic());
-    auto texture = std::unique_ptr<Core::Types::Texture>(Core::Types::Texture::createSolidColor(Core::Types::Color::RED, 256, 256));
-    material->setDiffuseMap(texture.get());
-    material->setSpecular(Core::Types::Color(0.5f, 0.5f, 0.5f, 0.5f));
-    material->setShininess(64.0f);
+    //auto texture = std::unique_ptr<Core::Types::Texture>(Core::Types::Texture::createSolidColor(Core::Types::Color::RED, 256, 256));
+    //material->setDiffuseMap(texture.get());
+    material->setDiffuse(Core::Types::Color(1.0f, 1.0f, 1.0f, 0.3f)); // 50% 透明
+    material->setSpecular(Core::Types::Color(1.0f, 1.0f, 1.0f, 0.8f));
+    material->setShininess(84.0f);
     mesh->setMaterial(material.get());
 
     scene.addObject(mesh.get());
 
-    auto pointLight = std::make_unique<Renderer::Lighting::PointLight>(Core::Math::Vector3(2.5f, 2.5f, options.cameraDistance - 0.5f), Core::Types::Color::WHITE, 3.0f, 18.0f);
+    auto pointLight = std::make_unique<Renderer::Lighting::PointLight>(Core::Math::Vector3(2.5f, 2.5f, options.cameraDistance - 0.5f), Core::Types::Color::WHITE, 5.0f, 18.0f);
     auto dirLight = std::make_unique<Renderer::Lighting::DirectionalLight>(Core::Math::Vector3(-1.0f, -1.0f, -1.0f), Core::Types::Color(1.0f, 0.95f, 0.85f, 1.0f), 0.4f);
     scene.addLight(pointLight.get());
     scene.addLight(dirLight.get());
@@ -105,9 +106,11 @@ int main(int argc, char** argv) {
     Renderer::Pipeline::SoftwareRendererSettings settings;
     settings.width = options.width;
     settings.height = options.height;
+    settings.ssaaFactor = 4;
 
     Renderer::Pipeline::SoftwareRenderer renderer(settings);
     renderer.render(scene);
+
 
     if (options.saveImage) {
         if (renderer.getRenderTarget().savePPM(options.outputFile)) {

@@ -1,6 +1,7 @@
 #include "software_renderer.h"
 #include <algorithm>
 #include <cmath>
+#include "../effects/ssaa.h"
 
 namespace Renderer {
 namespace Pipeline {
@@ -25,6 +26,16 @@ void SoftwareRenderer::render(const Scene::Scene& scene) {
         return;
     }
 
+    // 处理 SSAA：当 ssaaFactor > 1 时，临时使用更高分辨率渲染
+    const int ssaaFactor = std::max(1, m_settings.ssaaFactor);
+    const int baseWidth = m_settings.width;
+    const int baseHeight = m_settings.height;
+    if (ssaaFactor > 1) {
+        // 切换到高分辨率设置
+        m_settings.width = baseWidth * ssaaFactor;
+        m_settings.height = baseHeight * ssaaFactor;
+    }
+
     if (m_target.getWidth() != m_settings.width || m_target.getHeight() != m_settings.height) {
         m_target.resize(m_settings.width, m_settings.height);
     }
@@ -37,6 +48,14 @@ void SoftwareRenderer::render(const Scene::Scene& scene) {
 
     const auto& objects = scene.getObjects();
     const auto& lights = scene.getLights();
+
+    struct TransparentTri {
+        ScreenVertex v0, v1, v2;
+        Material* material;
+        RasterDerivatives derivs;
+        float depthKey; // 平均NDC深度，远->近排序用
+    };
+    std::vector<TransparentTri> transparentTris;
 
     for (const auto& object : objects) {
         if (!object.visible || !object.mesh) {
@@ -67,7 +86,12 @@ void SoftwareRenderer::render(const Scene::Scene& scene) {
             }
 
             Vector3 faceNormal;
-            if (!runPrimitiveAssembly(v0, v1, v2, cameraPosition, faceNormal)) {
+            // 先根据顶点与材质alpha判断是否透明，再决定是否进行背面剔除
+            float triVertexAlpha = (v0.attributes.color.a + v1.attributes.color.a + v2.attributes.color.a) / 3.0f;
+            float triMaterialAlpha = material ? material->getDiffuse().a : 1.0f;
+            float effectiveAlpha = triVertexAlpha * triMaterialAlpha;
+
+            if (!runPrimitiveAssembly(v0, v1, v2, cameraPosition, faceNormal, effectiveAlpha >= 0.999f)) {
                 continue;
             }
 
@@ -77,8 +101,36 @@ void SoftwareRenderer::render(const Scene::Scene& scene) {
                 continue;
             }
 
-            runRasterStage(v0, v1, v2, material, lights, cameraPosition, scene.getAmbientLight(), derivs);
+            // 基于三角形有效alpha判断透明/不透明
+            if (effectiveAlpha >= 0.999f) {
+                // 不透明：直接渲染（深度测试+写入由 runRasterStage 内处理）
+                runRasterStage(v0, v1, v2, material, lights, cameraPosition, scene.getAmbientLight(), derivs);
+            } else {
+                // 半透明：收集，稍后按距离排序后再渲染
+                float depthKey = (v0.ndcZ + v1.ndcZ + v2.ndcZ) / 3.0f;
+                transparentTris.push_back(TransparentTri{v0, v1, v2, material, derivs, depthKey});
+            }
         }
+    }
+
+    // 二阶段：半透明三角形按远->近排序后渲染（深度测试开，深度写入关由 runRasterStage 内阈值控制）
+    std::sort(transparentTris.begin(), transparentTris.end(), [](const TransparentTri& a, const TransparentTri& b) {
+        return a.depthKey > b.depthKey; // NDC 1远 0近：从大到小（远到近）
+    });
+    for (const auto& t : transparentTris) {
+        runRasterStage(t.v0, t.v1, t.v2, t.material, lights, cameraPosition, scene.getAmbientLight(), t.derivs);
+    }
+
+    // 若使用了 SSAA，则在渲染后进行低通+下采样回基准分辨率
+    if (ssaaFactor > 1) {
+        Renderer::Pipeline::RenderTarget lowRes(baseWidth, baseHeight);
+        lowRes.clear(scene.getBackgroundColor(), 1.0f);
+        Renderer::Effects::resolveBox(m_target, lowRes, ssaaFactor);
+        // 覆盖为低分辨率结果
+        m_target = lowRes;
+        // 恢复设置
+        m_settings.width = baseWidth;
+        m_settings.height = baseHeight;
     }
 }
 
@@ -126,7 +178,8 @@ bool SoftwareRenderer::runPrimitiveAssembly(const ScreenVertex& v0,
                                             const ScreenVertex& v1,
                                             const ScreenVertex& v2,
                                             const Vector3& cameraPos,
-                                            Vector3& faceNormal) const {
+                                            Vector3& faceNormal,
+                                            bool applyCulling) const {
     Vector3 p0 = v0.attributes.worldPosition;
     Vector3 p1 = v1.attributes.worldPosition;
     Vector3 p2 = v2.attributes.worldPosition;
@@ -136,7 +189,7 @@ bool SoftwareRenderer::runPrimitiveAssembly(const ScreenVertex& v0,
     }
     faceNormal = faceNormal.normalize();
 
-    if (m_settings.backfaceCulling) {
+    if (applyCulling && m_settings.backfaceCulling) {
         Vector3 viewDir = (cameraPos - p0).normalize();
         if (faceNormal.dot(viewDir) <= 0.0f) {
             return false;
@@ -230,7 +283,9 @@ void SoftwareRenderer::runRasterStage(const ScreenVertex& v0,
             }
             float depth01 = depthNDC * 0.5f + 0.5f;
 
-            if (!m_target.depthTestAndSet(x, y, depth01)) {
+            // 先仅做深度测试，不立即写入。透明片元不写深度，避免遮挡后续片元；
+            // 不透明片元再写深度。
+            if (!m_target.depthPasses(x, y, depth01)) {
                 continue;
             }
 
@@ -238,7 +293,20 @@ void SoftwareRenderer::runRasterStage(const ScreenVertex& v0,
                                                                        alpha, beta, gamma, m_settings.perspectiveCorrect);
 
             Color shaded = runShadingStage(interpolated, material, lights, cameraPos, ambientLight, derivs);
-            m_target.setPixel(x, y, shaded);
+            // 预乘Alpha混合：out = src + dst * (1 - src.a)
+            Color dst = m_target.getPixel(x, y);
+            float srcA = std::clamp(shaded.a, 0.0f, 1.0f);
+            Color out(
+                shaded.r + dst.r * (1.0f - srcA),
+                shaded.g + dst.g * (1.0f - srcA),
+                shaded.b + dst.b * (1.0f - srcA),
+                srcA + dst.a * (1.0f - srcA)
+            );
+            m_target.setPixel(x, y, out);
+            // 仅当片元基本不透明时写入深度（简单阈值）
+            if (srcA >= 0.999f) {
+                m_target.setDepth(x, y, depth01);
+            }
             // Track total fragments for debugging
         }
     }
@@ -301,10 +369,12 @@ Color SoftwareRenderer::runShadingStage(const GeometryVertex& interpolated,
         finalColor = finalColor + diffuse + specular;
     }
 
-    finalColor.r = std::clamp(finalColor.r, 0.0f, 1.0f);
-    finalColor.g = std::clamp(finalColor.g, 0.0f, 1.0f);
-    finalColor.b = std::clamp(finalColor.b, 0.0f, 1.0f);
-    finalColor.a = 1.0f;
+    // 取来自反照率的透明度（如使用纹理，则来自纹理A通道）
+    finalColor.a = std::clamp(baseColor.a, 0.0f, 1.0f);
+    // 预乘Alpha
+    finalColor.r = std::clamp(finalColor.r, 0.0f, 1.0f) * finalColor.a;
+    finalColor.g = std::clamp(finalColor.g, 0.0f, 1.0f) * finalColor.a;
+    finalColor.b = std::clamp(finalColor.b, 0.0f, 1.0f) * finalColor.a;
     return finalColor;
 }
 
