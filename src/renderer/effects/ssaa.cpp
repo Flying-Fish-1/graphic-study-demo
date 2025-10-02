@@ -1,5 +1,6 @@
 #include "ssaa.h"
 #include <algorithm>
+#include <vector>
 
 namespace Renderer {
 namespace Effects {
@@ -25,24 +26,35 @@ void resolveBox(const RenderTarget& highRes, RenderTarget& lowRes, int factor) {
     int inW = highRes.getWidth();
     int inH = highRes.getHeight();
 
-    // 约束：输入应为 out*factor 尺寸
-    for (int y = 0; y < outH; ++y) {
+    std::vector<Color> horizontal(static_cast<std::size_t>(outW * inH), Color(0, 0, 0, 0));
+    for (int y = 0; y < inH; ++y) {
         for (int x = 0; x < outW; ++x) {
             int startX = x * factor;
-            int startY = y * factor;
             int endX = std::min(startX + factor, inW);
-            int endY = std::min(startY + factor, inH);
+            Color sum(0, 0, 0, 0);
+            int count = 0;
+            for (int xx = startX; xx < endX; ++xx) {
+                sum = sum + highRes.getPixel(xx, y);
+                ++count;
+            }
+            if (count > 0) {
+                horizontal[static_cast<std::size_t>(y * outW + x)] = sum * (1.0f / static_cast<float>(count));
+            }
+        }
+    }
+
+    for (int y = 0; y < outH; ++y) {
+        int startY = y * factor;
+        int endY = std::min(startY + factor, inH);
+        for (int x = 0; x < outW; ++x) {
             Color sum(0, 0, 0, 0);
             int count = 0;
             for (int yy = startY; yy < endY; ++yy) {
-                for (int xx = startX; xx < endX; ++xx) {
-                    sum = sum + highRes.getPixel(xx, yy);
-                    ++count;
-                }
+                sum = sum + horizontal[static_cast<std::size_t>(yy * outW + x)];
+                ++count;
             }
             if (count > 0) {
-                Color avg = sum * (1.0f / static_cast<float>(count));
-                lowRes.setPixel(x, y, avg);
+                lowRes.setPixel(x, y, sum * (1.0f / static_cast<float>(count)));
             }
         }
     }
@@ -50,5 +62,4 @@ void resolveBox(const RenderTarget& highRes, RenderTarget& lowRes, int factor) {
 
 } // namespace Effects
 } // namespace Renderer
-
 

@@ -142,9 +142,7 @@ int main(int argc, char** argv) {
     Renderer::Pipeline::SoftwareRendererSettings settings;
     settings.width = options.width;
     settings.height = options.height;
-    settings.ssaaFactor = 1;
-    //settings.enableFresnel = true;
-    //settings.fresnelF0 = 0.04f;
+    settings.ssaaFactor = 2;
 
     Renderer::Pipeline::SoftwareRenderer renderer(settings);
 
